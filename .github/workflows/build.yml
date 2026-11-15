@@ -36,8 +36,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: 4. Verify Pre-installed Android SDK & Accept Licenses
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: 5. Setup Gradle Wrapper
         uses: gradle/actions/setup-gradle@v4
