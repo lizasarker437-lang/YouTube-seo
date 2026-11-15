@@ -5,210 +5,62 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  build:
-    name: Validate, test and build Android APK
+  build-apk:
+    name: Extract ZIP & Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v6
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Prepare Android source (folder or source ZIP)
-        shell: bash
+      - name: Extract Project ZIP File
         run: |
-          set -euo pipefail
-          # Prefer this release ZIP even if older project files exist in the repository.
-          SOURCE_ZIP=""
-          if [ -f "SRCreationFarm_YouTube_SEO_AI_FIXED_2.0.2.zip" ]; then
-            SOURCE_ZIP="SRCreationFarm_YouTube_SEO_AI_FIXED_2.0.2.zip"
+          if [ -f "youtube_seo_ai_source.zip" ]; then
+            echo "Extracting youtube_seo_ai_source.zip..."
+            unzip -o youtube_seo_ai_source.zip -d extracted_source
           else
-            mapfile -t sources < <(find . -maxdepth 1 -type f -iname '*.zip' | sort)
-            if [ "${#sources[@]}" -eq 1 ]; then
-              SOURCE_ZIP="${sources[0]}"
-            elif [ -f settings.gradle ] && [ -f app/build.gradle ]; then
-              echo "Using extracted Android project at repository root."
+            ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+            if [ -n "$ZIP_FILE" ]; then
+              echo "Extracting $ZIP_FILE..."
+              unzip -o "$ZIP_FILE" -d extracted_source
             else
-              echo "No unambiguous Android project found. Upload the current source ZIP or extract its files at repository root."
+              echo "Error: No ZIP file found in repository root!"
               exit 1
             fi
           fi
-          if [ -n "$SOURCE_ZIP" ]; then
-            mkdir -p "$RUNNER_TEMP/android_source"
-            unzip -q "$SOURCE_ZIP" -d "$RUNNER_TEMP/android_source"
-            mapfile -t projects < <(find "$RUNNER_TEMP/android_source" -maxdepth 4 -name settings.gradle -type f | sort)
-            if [ "${#projects[@]}" -ne 1 ]; then
-              echo "Expected exactly one settings.gradle inside source ZIP; found ${#projects[@]}."
-              exit 1
-            fi
-            cp -a "$(dirname "${projects[0]}")/." ./
-            echo "Android project extracted from: $SOURCE_ZIP"
-          fi
-          test -f settings.gradle
-          test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-          test -f gradle/wrapper/gradle-wrapper.properties
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
 
-      # v3 attempted to install the removed SDK package 'tools'; v4 does not.
-      - name: Set up Android SDK (fixed)
-        uses: android-actions/setup-android@v4
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
         with:
-          packages: ''
+          flutter-version: '3.24.5'
+          channel: 'stable'
+          cache: true
 
-      - name: Install Android API 36 SDK packages
-        shell: bash
+      - name: Initialize Android Project & Merge Source Files
         run: |
-          set -euo pipefail
-          sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "platform-tools" 2>&1 | tee sdk-install.log
-          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          test -s "$SDK_ROOT/platforms/android-36/android.jar"
-          test -x "$SDK_ROOT/build-tools/35.0.0/aapt"
-          test -x "$SDK_ROOT/build-tools/35.0.0/apksigner"
-          echo "Installed SDK components verified."
+          flutter create --org com.shahriar.youtubeseo --project-name youtube_seo_ai app_build
+          cp -r extracted_source/lib/* app_build/lib/
+          cp extracted_source/pubspec.yaml app_build/pubspec.yaml
+          cp extracted_source/android/app/src/main/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
 
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '8.13'
-          validate-wrappers: false
+      - name: Install Dependencies
+        working-directory: app_build
+        run: flutter pub get
 
-      - name: Generate official Gradle Wrapper in isolated bootstrap project
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/gradle-bootstrap"
-          printf '%s\n' 'rootProject.name = "wrapper-bootstrap"' > "$RUNNER_TEMP/gradle-bootstrap/settings.gradle"
-          (cd "$RUNNER_TEMP/gradle-bootstrap" && gradle wrapper --gradle-version 8.13 --gradle-distribution-sha256-sum 20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78)
-          cp "$RUNNER_TEMP/gradle-bootstrap/gradlew" ./gradlew
-          cp "$RUNNER_TEMP/gradle-bootstrap/gradlew.bat" ./gradlew.bat
-          cp "$RUNNER_TEMP/gradle-bootstrap/gradle/wrapper/gradle-wrapper.jar" ./gradle/wrapper/gradle-wrapper.jar
-          cp "$RUNNER_TEMP/gradle-bootstrap/gradle/wrapper/gradle-wrapper.properties" ./gradle/wrapper/gradle-wrapper.properties
-          chmod +x gradlew
-          test -s gradle/wrapper/gradle-wrapper.jar
-          ./gradlew --version
+      - name: Build Release APK
+        working-directory: app_build
+        run: flutter build apk --release
 
-      - name: Prepare optional release signing
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release-key.jks"
-            {
-              printf 'ANDROID_KEYSTORE_PATH=%s\n' "$GITHUB_WORKSPACE/release-key.jks"
-              printf 'ANDROID_KEYSTORE_PASSWORD=%s\n' "$KEYSTORE_PASSWORD"
-              printf 'ANDROID_KEY_ALIAS=%s\n' "$KEY_ALIAS"
-              printf 'ANDROID_KEY_PASSWORD=%s\n' "$KEY_PASSWORD"
-            } >> "$GITHUB_ENV"
-            echo "Release signing key configured."
-          elif [ -n "$KEYSTORE_BASE64" ] || [ -n "$KEYSTORE_PASSWORD" ] || [ -n "$KEY_ALIAS" ] || [ -n "$KEY_PASSWORD" ]; then
-            echo "Release signing secrets are incomplete. Add all four secrets or remove them."
-            exit 1
-          else
-            echo "No release signing secret found; release APK will be unsigned. Debug APK remains installable."
-          fi
-
-      - name: Confirm toolchain and resolve dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          java -version
-          ./gradlew --version
-          set -o pipefail
-          ./gradlew --no-daemon :app:dependencies --configuration debugRuntimeClasspath 2>&1 | tee build-dependencies.log
-
-      - name: Run unit tests and Android lint
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew --no-daemon clean testDebugUnitTest lintDebug 2>&1 | tee build-validation.log
-
-      - name: Build debug and release APKs
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew --no-daemon assembleDebug assembleRelease 2>&1 | tee build-apk.log
-
-      - name: Verify APK output
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$DEBUG_APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$DEBUG_APK"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$DEBUG_APK" > apk-badging.txt
-          head -20 apk-badging.txt
-          echo "Debug APK verified: $DEBUG_APK"
-          ls -lh "$DEBUG_APK"
-          if [ -s "app/build/outputs/apk/release/app-release.apk" ]; then
-            echo "Signed release APK found."
-            ls -lh app/build/outputs/apk/release/app-release.apk
-          elif [ -s "app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "Release APK was built but is unsigned; configure the keystore secrets for a signed release."
-            ls -lh app/build/outputs/apk/release/app-release-unsigned.apk
-          else
-            echo "Release APK missing."
-            exit 1
-          fi
-
-      - name: Upload installable debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtube-seo-ai-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload release APK
+      - name: Upload Generated APK
         uses: actions/upload-artifact@v4
         with:
           name: youtube-seo-ai-release-apk
-          path: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/apk/release/app-release-unsigned.apk
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Capture toolchain diagnostics
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "Date (UTC): $(date -u)"
-            echo "Java:"
-            java -version 2>&1 || true
-            echo "Android SDK location: ${ANDROID_SDK_ROOT:-${ANDROID_HOME:-unset}}"
-            echo "Installed SDK packages:"
-            sdkmanager --list_installed 2>&1 || true
-            echo "Git commit: ${GITHUB_SHA:-unknown}"
-          } > build-toolchain.log
-
-      - name: Upload reports and build error logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtube-seo-ai-build-diagnostics
-          path: |
-            apk-badging.txt
-            sdk-install.log
-            build-dependencies.log
-            build-validation.log
-            build-apk.log
-            build-toolchain.log
-            app/build/reports/
-            app/build/test-results/
-            app/build/outputs/logs/
-          if-no-files-found: warn
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
