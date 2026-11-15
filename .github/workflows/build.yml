@@ -5,62 +5,60 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-jobs:
-  build-apk:
-    name: Extract ZIP & Build Android APK
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  build:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Extract Project ZIP File
-        run: |
-          if [ -f "youtube_seo_ai_source.zip" ]; then
-            echo "Extracting youtube_seo_ai_source.zip..."
-            unzip -o youtube_seo_ai_source.zip -d extracted_source
-          else
-            ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
-            if [ -n "$ZIP_FILE" ]; then
-              echo "Extracting $ZIP_FILE..."
-              unzip -o "$ZIP_FILE" -d extracted_source
-            else
-              echo "Error: No ZIP file found in repository root!"
-              exit 1
-            fi
-          fi
-
-      - name: Setup Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Setup Flutter SDK
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          channel: stable
           flutter-version: '3.24.5'
-          channel: 'stable'
           cache: true
 
-      - name: Initialize Android Project & Merge Source Files
-        run: |
-          flutter create --org com.shahriar.youtubeseo --project-name youtube_seo_ai app_build
-          cp -r extracted_source/lib/* app_build/lib/
-          cp extracted_source/pubspec.yaml app_build/pubspec.yaml
-          cp extracted_source/android/app/src/main/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
+      - name: Generate Android wrapper
+        run: flutter create --platforms=android --org com.shahriar.youtubeseo --project-name youtube_seo_ai app_build
 
-      - name: Install Dependencies
+      - name: Copy application source
+        run: |
+          cp pubspec.yaml app_build/pubspec.yaml
+          cp -R lib/. app_build/lib/
+          cp -R test/. app_build/test/
+          cp android/app/src/main/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Resolve packages
         working-directory: app_build
         run: flutter pub get
 
-      - name: Build Release APK
+      - name: Analyze source
+        working-directory: app_build
+        run: flutter analyze --no-pub
+
+      - name: Run tests
+        working-directory: app_build
+        run: flutter test --no-pub
+
+      - name: Build release APK
         working-directory: app_build
         run: flutter build apk --release
 
-      - name: Upload Generated APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-seo-ai-release-apk
+          name: youtube-seo-ai-release
           path: app_build/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
           retention-days: 30
