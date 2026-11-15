@@ -1,4 +1,4 @@
-name: Build YouTube SEO AI APK
+name: Build YouTube SEO Pro APK
 
 on:
   push:
@@ -6,61 +6,78 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-apk:
-    name: Extract ZIP & Build Android APK
+  build-android-apk:
+    name: Extract ZIP, Test & Build APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Extract Project ZIP File
+      - name: 2. Extract Source ZIP File
         run: |
-          if [ -f "youtube_seo_ai_source.zip" ]; then
-            echo "Extracting youtube_seo_ai_source.zip..."
-            unzip -o youtube_seo_ai_source.zip -d extracted_source
+          if [ -f "YouTubeSEOPro_Android_Source.zip" ]; then
+            echo "Extracting YouTubeSEOPro_Android_Source.zip..."
+            unzip -o YouTubeSEOPro_Android_Source.zip -d android_project
           else
             ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
             if [ -n "$ZIP_FILE" ]; then
               echo "Extracting $ZIP_FILE..."
-              unzip -o "$ZIP_FILE" -d extracted_source
+              unzip -o "$ZIP_FILE" -d android_project
             else
-              echo "Error: No ZIP file found in repository root!"
+              echo "ERROR: No Source ZIP file found in repository root!"
               exit 1
             fi
           fi
 
-      - name: Setup Java 17
+      - name: 3. Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter SDK
-        uses: subosito/flutter-action@v2
+      - name: 4. Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 5. Setup Gradle Wrapper
+        uses: gradle/actions/setup-gradle@v4
         with:
-          flutter-version: '3.24.5'
-          channel: 'stable'
-          cache: true
+          gradle-version: '8.7'
 
-      - name: Initialize Android Project & Merge Source Files
+      - name: 6. Run Unit Tests
+        working-directory: android_project
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: 7. Build Debug & Release APKs
+        working-directory: android_project
         run: |
-          flutter create --org com.shahriar.youtubeseo --project-name youtube_seo_ai app_build
-          cp -r extracted_source/lib/* app_build/lib/
-          cp extracted_source/pubspec.yaml app_build/pubspec.yaml
-          cp extracted_source/android/app/src/main/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
+          gradle assembleDebug --stacktrace
+          gradle assembleRelease --stacktrace
 
-      - name: Install Dependencies
-        working-directory: app_build
-        run: flutter pub get
+      - name: 8. Verify Generated APK
+        working-directory: android_project
+        run: |
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/release/app-release-unsigned.apk
 
-      - name: Build Release APK
-        working-directory: app_build
-        run: flutter build apk --release
-
-      - name: Upload Generated APK
+      - name: 9. Upload Debug APK (Ready to Install)
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-seo-ai-release-apk
-          path: app_build/build/app/outputs/flutter-apk/app-release.apk
+          name: YouTubeSEOPro-v2.0.0-debug-apk
+          path: android_project/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: 10. Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTubeSEOPro-v2.0.0-release-unsigned-apk
+          path: android_project/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
+
+      - name: 11. Upload Build Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-error-logs
+          path: android_project/app/build/reports/
+          retention-days: 7
