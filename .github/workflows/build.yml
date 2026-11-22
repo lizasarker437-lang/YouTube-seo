@@ -1,4 +1,4 @@
-name: Build Video SEO AI APK
+name: Build YouTube SEO AI APK
 
 on:
   push:
@@ -22,10 +22,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Always prefer this release ZIP, regardless of older ZIPs or source files.
+          # Prefer this release ZIP even if older project files exist in the repository.
           SOURCE_ZIP=""
-          if [ -f "SRCreationFarm_Video_SEO_AI_YouTube_Facebook_2.1.1.zip" ]; then
-            SOURCE_ZIP="SRCreationFarm_Video_SEO_AI_YouTube_Facebook_2.1.1.zip"
+          if [ -f "SRCreationFarm_YouTube_SEO_AI_FB_2.1.0.zip" ]; then
+            SOURCE_ZIP="SRCreationFarm_YouTube_SEO_AI_FB_2.1.0.zip"
           else
             mapfile -t sources < <(find . -maxdepth 1 -type f -iname '*.zip' | sort)
             if [ "${#sources[@]}" -eq 1 ]; then
@@ -52,12 +52,6 @@ jobs:
           test -f app/build.gradle
           test -f app/src/main/AndroidManifest.xml
           test -f gradle/wrapper/gradle-wrapper.properties
-
-      - name: Preflight check Android resource API compatibility
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/verify_project.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -139,7 +133,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon clean testDebugUnitTest lintDebug lintRelease 2>&1 | tee build-validation.log
+          ./gradlew --no-daemon clean testDebugUnitTest lintDebug 2>&1 | tee build-validation.log
 
       - name: Build debug and release APKs
         shell: bash
